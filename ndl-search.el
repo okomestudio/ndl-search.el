@@ -509,6 +509,13 @@ ITEM-ALIST-GETTER get an item alist for one of the COMPLETIONS."
   (when-let* ((url (ndl-search-query :title query)))
     (ndl-search-bib-item-get url)))
 
+;;;###autoload
+(defun ndl-search-article-any (query)
+  "Perform 'any' search for QUERY."
+  (interactive "sNDL search (any): ")
+  (when-let* ((url (ndl-search-query :any query :dpid "zassaku")))
+    (ndl-search-bib-item-get url)))
+
 ;; Utilities
 
 (defun ndl-search-build-url (base-url path-segments query-alist)

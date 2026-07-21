@@ -33,16 +33,91 @@
 (require 'zotero)
 
 ;;;###autoload
-(defun ndl-search-zotero-create-item (query)
+(defun ndl-search-zotero-create-item ()
   "Create a Zotero item obtained from QUERY."
-  (interactive "sNDL search (any): ")
-  (when-let* ((item (ndl-search-any query)))
+  (interactive)
+  ;; (interactive "sNDL search (any): ")
+  (when-let* ((item (call-interactively #'ndl-search-any)))
     (let ((json (pcase (map-elt item "資料種別")
+                  ("図書" (ndl-search-zotero-book--create item))
+                  ("記事" (ndl-search-zotero-article--create item))
                   (_ (ndl-search-zotero-book--create item)))))
+      (pp json)
       (zotero-create-item json))))
 
+(defun ndl-search-zotero-article--create (item)
+  "Create an article from ITEM."
+  (let ((creator-indices
+         (mapcar (lambda (it)
+                   (cons (concat (map-elt it "氏") (map-elt it "名"))
+                         (cons (map-elt it "氏") (map-elt it "名"))))
+                 (map-elt item "著者標目"))))
+    (append
+     (list :itemType "magazineArticle")
+     (when-let* ((title-parts (string-split (map-elt item "タイトル")
+                                            "[:：]+" 'omit-empty "\\s-+"))
+                 (title (string-join title-parts " "))
+                 (short-title (car title-parts)))
+       (append
+        (list :title title)
+        (when (< (length short-title) (length title))
+          (list :shortTitle short-title))))
+     (list :publicationTitle (map-elt item "タイトル（掲載誌）")
+           :publisher (map-elt item "出版事項（掲載誌）")
+           :place (map-elt item "出版事項（掲載誌）")
+           :date (map-elt item "掲載年月日（W3CDTF）")
+           :volume (map-elt item "掲載巻")
+           :issue (map-elt item "掲載号")
+           :pages (map-elt item "掲載ページ")
+           :language (ndl-search-zotero--transform-language (map-elt item "本文の言語コード")))
+
+     (list :creators
+           (vconcat
+            (mapcar (lambda (it)
+                      (ndl-search-zotero--transform-creator it creator-indices))
+                    (append
+                     (map-elt item "著者・編者")
+                     (mapcar (lambda (it)
+                               (setf (map-elt it "区分")
+                                     (concat "シリーズ" (map-elt it "区分")))
+                               it)
+                             (map-elt item "シリーズ著者・編者"))))))
+
+     ;; (when-let* ((s (map-elt item "シリーズタイトル")))
+     ;;   (let ((parts (when (string-match "[ \t]*[;][ \t]*" s)
+     ;;                  (cons (substring s 0 (match-beginning 0))
+     ;;                        (substring s (match-end 0))))))
+     ;;     (list :series (or (car parts) s)
+     ;;           :seriesNumber (cdr parts))))
+     ;; (list :edition (map-elt item "版"))
+     ;; (when-let*
+     ;;     ((it (seq-find (lambda (el)
+     ;;                      (or (null (map-elt el "その他"))
+     ;;                          (string= (map-elt el "その他") "出版")))
+     ;;                    (map-elt item "出版事項"))))
+     ;;   (list :publisher (map-elt it "出版社")
+     ;;         :place (map-elt it "所在地")))
+     ;; (list :date (ndl-search-zotero--transform-date (map-elt item "出版年月日等"))
+     ;;       :numPages (let ((it (map-elt item "数量")))
+     ;;                   (if (string= (map-elt it "単位") "p")
+     ;;                       (map-elt it "数量")))
+     ;;       :isbn (map-elt item "ISBN")
+     ;;       )
+     ;; (let* ((ndc10 (map-elt item "NDC10版"))
+     ;;        (topic-indices (map-elt item "件名標目")))
+     ;;   (list :tags (vconcat (list (list :tag ndc10))) ))
+     (list :extra
+           (mapconcat
+            (lambda (it)
+              (format "%s: %s" (car it) (cdr it)))
+            (append
+             (when-let* ((id (map-elt (map-elt item "書誌ID（NDLBibID）")
+                                      "NDLBibID")))
+               (list (cons "NDLBibID" id))))
+            "\n")))))
+
 (defun ndl-search-zotero-book--create (item)
-  "Create a book ITEM in JSON."
+  "Create a book from ITEM."
   (let ((creator-indices
          (mapcar (lambda (it)
                    (cons (concat (map-elt it "氏") (map-elt it "名"))
@@ -91,6 +166,9 @@
                            (map-elt it "数量")))
            :isbn (map-elt item "ISBN")
            :language (ndl-search-zotero--transform-language (map-elt item "本文の言語コード")))
+     (let* ((ndc10 (map-elt item "NDC10版"))
+            (topic-indices (map-elt item "件名標目")))
+       (list :tags (vconcat (list (list :tag ndc10))) ))
      (list :extra
            (mapconcat
             (lambda (it)
