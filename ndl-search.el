@@ -90,7 +90,9 @@
     ("出版年（W3CDTF）" . ndl-search--process-publication-year)
     ("数量" . ndl-search--process-quantity)
     ("著者・編者" . ndl-search--process-authors)
-    ("著者標目" . ndl-search--process-author-indices)))
+    ("シリーズ著者・編者" . ndl-search--process-authors)
+    ("著者標目" . ndl-search--process-author-indices)
+    ("書誌ID（NDLBibID）" . ndl-search--process-ndl-bib-id)))
 
 (defun ndl-search-bib-item-get (url)
   "Get bib item as an alist from URL.
@@ -114,39 +116,46 @@ The bib item URL should have a path '/books/<id>'."
           "pages-books-ndls-section-bib-list-item"))))
     (if bib-item
         (progn
-          (push (cons "ENTITY-URL" url) bib-item)
+          (push (cons "ndl:url" url) bib-item)
           (pp bib-item))
       (message "No bib item extracted from %s" url))
     bib-item))
 
 (defun ndl-search--process-authors (node)
   "Process NODE ('dd') as author/editor/contributer info alist."
-  (mapcar
-   (lambda (span)
-     (let ((s (dom-inner-text span)))
-       (when (string-match "^\\([^ ]+\\) *\\(.*\\)?$" s)
-         (let ((fullname (match-string 1 s))
-               (role (match-string 2 s)))
-           (delq nil
-                 (list (when fullname (cons "姓名" fullname))
-                       (when role (cons "区分" role))))))))
-   (dom-by-tag node 'span)))
+  (apply #'append
+         (mapcar
+          (lambda (span)
+            (let ((s (dom-inner-text span)))
+              (when (string-match "\\`\\(.*?\\)\\s-+\\(\\S-+\\)\\'" s)
+                (let ((role (match-string 2 s))
+                      (fullnames (string-split (match-string 1 s) ", ")))
+                  (mapcar (lambda (fullname)
+                            (delq nil
+                                  (list (when fullname (cons "姓名" fullname))
+                                        (when role (cons "区分" role)))))
+                          fullnames)))))
+          (dom-by-tag node 'span))))
 
 (defun ndl-search--process-author-indices (node)
   "Process NODE ('dd') as author indices alist."
   (let ((pattern
-         (concat "^"
-                 "\\(\\([^,]+\\)\\(, *\\([^, ]+\\)\\)\\)" ; surname, given name
-                 "\\(, *\\([0-9]+\\)-\\([0-9]+\\)?\\)?" ; year-of-birth, year-of-death
-                 " +\\(\\(\\cK+\\)\\(, *\\(\\cK+\\)\\)\\)"
-                 "\\(, *\\([0-9]+\\)-\\([0-9]+\\)?\\)?"
-                 "\\( +( *\\([0-9]+\\) *)\\)?.*" ; entity-id
-                 "?")))
+         (concat
+          "^\\s-*"
+          "\\(\\(?18:[^ ：:]+\\) *[：:] *\\)?"
+          "\\(\\(?2:[^,]+\\)\\(, *\\(?4:[^, ]+\\)\\)\\)" ; surname, given name
+          "\\(, *\\(\\(?6:[0-9]+\\)-\\(?7:[0-9]+\\|.+\\)?\\|.+\\)\\)?" ; year-of-birth, year-of-death
+          "\\s-+"
+          "\\(\\(?9:\\cK+\\)\\(, *\\(?11:\\cK+\\)\\)\\)"
+          "\\(, *\\(\\([0-9]+\\)-\\([0-9]+\\|.+\\)?\\|.+\\)\\)?"
+          "\\( +( *\\(?16:[0-9]+\\) *)\\)?.*" ; entity-id
+          "?")))
     (mapcar
      (lambda (span)
        (let ((s (dom-inner-text span)))
          (when (string-match pattern s)
-           (let ((surname (match-string 2 s))
+           (let ((role (match-string 18 s))
+                 (surname (match-string 2 s))
                  (given-name (match-string 4 s))
                  (yob (match-string 6 s))
                  (yod (match-string 7 s))
@@ -155,6 +164,7 @@ The bib item URL should have a path '/books/<id>'."
                  (entity-id (match-string 16 s)))
              (delq nil
                    (list
+                    (when role (cons "区分" role))
                     (when surname (cons "氏" surname))
                     (when given-name (cons "名" given-name))
                     (when yob (cons "生年" yob))
@@ -214,6 +224,14 @@ The bib item URL should have a path '/books/<id>'."
                 (cons "単位" unit)))
       s)))
 
+(defun ndl-search--process-ndl-bib-id (node)
+  "Process NODE ('dd') as quantity."
+  (delq nil
+        (list (when-let* ((span (dom-by-tag node 'span)))
+                (cons "NDLBibID" (dom-inner-text span)))
+              (when-let* ((a (dom-by-tag node 'a)))
+                (cons "URL" (dom-inner-text a))))))
+
 ;; Search Query
 
 (defun ndl-search--extract-search-items (url)
@@ -231,8 +249,14 @@ The bib item URL should have a path '/books/<id>'."
               (lambda (node)
                 (when node
                   (dom-inner-text node)))))
-    (let ((url-automatic-caching t))
-      (with-current-buffer (url-retrieve-synchronously url)
+    (let* ((url-request-method "GET")
+           (url-request-data nil)
+           (url-request-extra-headers nil)
+           (url-automatic-caching t)
+           (response-buffer (url-retrieve-synchronously url)))
+      (unless response-buffer
+        (error "Response not received from %s" url))
+      (with-current-buffer response-buffer
         (set-buffer-multibyte t)
         (decode-coding-region (point-min) (point-max) 'utf-8)
         (goto-char (point-min))
@@ -296,18 +320,20 @@ The bib item URL should have a path '/books/<id>'."
             (by-class (car (by-class dom "search-result-body"))
                       "search-result-item"))))))))
 
-(cl-defun ndl-search-query (&key any title creator)
+(cl-defun ndl-search-query (&key any title creator (dpid "iss-ndl-opac"))
   "Make an OpenURL search query.
 ANY maps to the query parameter 'any'.
 TITLE maps to the query parameter 'btitle'.
 CREATOR maps to the query parameter 'au'."
-  (let ((url (ndl-search-build-url
-              "https://ndlsearch.ndl.go.jp/api/openurl"
-              nil
-              (delq nil (list (when any (cons 'any (list any)))
-                              (when title (cons 'btitle (list title)))
-                              (when creator (cons 'au (list creator)))))))
-        all-items)
+  (let* ((query-params
+          (delq nil (list
+                     (when dpid (cons 'ndl_dpid (list dpid)))
+                     (when any (cons 'any (list any)))
+                     (when title (cons 'btitle (list title)))
+                     (when creator (cons 'au (list creator))))))
+         (url (ndl-search-build-url
+               "https://ndlsearch.ndl.go.jp/api/openurl" nil query-params))
+         all-items)
     (while
         (pcase-let* ((`(,resolved-url . ,items) (ndl-search--extract-search-items url))
                      (parts (split-string
@@ -458,18 +484,21 @@ ITEM-ALIST-GETTER get an item alist for one of the COMPLETIONS."
 
 ;; Interactive Commands
 
+;;;###autoload
 (defun ndl-search-any (query)
   "Perform 'any' search for QUERY."
   (interactive "sNDL search (any): ")
   (when-let* ((url (ndl-search-query :any query)))
     (ndl-search-bib-item-get url)))
 
+;;;###autoload
 (defun ndl-search-creator (query)
   "Perform 'creator' search for QUERY."
   (interactive "sNDL search (creator): ")
   (when-let* ((url (ndl-search-query :creator query)))
     (ndl-search-bib-item-get url)))
 
+;;;###autoload
 (defun ndl-search-title (query)
   "Perform 'title' search for QUERY."
   (interactive "sNDL search (title): ")
