@@ -58,6 +58,8 @@
         (list :title title)
         (when (< (length short-title) (length title))
           (list :shortTitle short-title))))
+     (when-let* ((volume (map-elt item "巻次・部編番号")))
+       (list :volume volume))
      (list :creators
            (vconcat
             (mapcar (lambda (it)
