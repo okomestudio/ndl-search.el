@@ -27,6 +27,10 @@
 ;;
 ;; A search utility for the National Diet Library, Japan (国立国会図書館).
 ;;
+;; References:
+;;
+;;   - API specifications: https://ndlsearch.ndl.go.jp/help/api/specifications
+;;
 ;;; Code:
 
 (require 'cl-lib)

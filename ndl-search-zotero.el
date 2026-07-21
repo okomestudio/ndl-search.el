@@ -21,7 +21,9 @@
 ;;
 ;; This module provides a Zotero integration for `ndl-search'.
 ;;
-;; For the Zotero API schema, see https://api.zotero.org/schema.
+;; References:
+;;
+;;   - Zotero API schema: https://api.zotero.org/schema
 ;;
 ;;; Code:
 
@@ -67,9 +69,13 @@
                                      (concat "シリーズ" (map-elt it "区分")))
                                it)
                              (map-elt item "シリーズ著者・編者"))))))
-     (list :series (map-elt item "シリーズタイトル")
-           :seriesNumber nil
-           :edition (map-elt item "版"))
+     (when-let* ((s (map-elt item "シリーズタイトル")))
+       (let ((parts (when (string-match "[ \t]*[;][ \t]*" s)
+                      (cons (substring s 0 (match-beginning 0))
+                            (substring s (match-end 0))))))
+         (list :series (or (car parts) s)
+               :seriesNumber (cdr parts))))
+     (list :edition (map-elt item "版"))
      (when-let*
          ((it (seq-find (lambda (el)
                           (or (null (map-elt el "その他"))
