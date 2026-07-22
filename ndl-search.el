@@ -48,6 +48,11 @@
   :group 'convenience
   :prefix "ndl-search-")
 
+(defcustom ndl-search-debug t
+  "Debug switch."
+  :type 'boolean
+  :group 'ndl-search)
+
 (defcustom ndl-search-sleep '(0.10 0.15)
   "Sleep in seconds between HTTP calls."
   :type '(choice
@@ -100,13 +105,17 @@
 
 (defconst ndl-search--field-processors
   '(("出版事項" . ndl-search--process-publisher)
+    ("出版事項（掲載誌）" . ndl-search--process-publisher)
     ("出版年月日等" . ndl-search--process-publication-date)
     ("出版年（W3CDTF）" . ndl-search--process-publication-year)
     ("数量" . ndl-search--process-quantity)
-    ("著者・編者" . ndl-search--process-authors)
-    ("シリーズ著者・編者" . ndl-search--process-authors)
-    ("著者標目" . ndl-search--process-author-indices)
+    ("著者・編者" . ndl-search--process-creators)
+    ("シリーズ著者・編者" . ndl-search--process-creators)
+    ("著者標目" . ndl-search--process-creator-indices)
     ("書誌ID（NDLBibID）" . ndl-search--process-ndl-bib-id)))
+
+(defconst ndl-search--regexp-roles
+  (regexp-opt '("著" "編" "訳")))
 
 (defun ndl-search-bib-item-get (url)
   "Get bib item as an alist from URL.
@@ -135,35 +144,49 @@ The bib item URL should have a path '/books/<id>'."
       (message "No bib item extracted from %s" url))
     bib-item))
 
-(defun ndl-search--process-authors (node)
+(defun ndl-search--process-creators (node)
   "Process NODE ('dd') as author/editor/contributer info alist."
-  (apply #'append
-         (mapcar
-          (lambda (span)
-            (let ((s (dom-inner-text span)))
-              (when (string-match "\\`\\(.*?\\)\\s-+\\(\\S-+\\)\\'" s)
-                (let ((role (match-string 2 s))
-                      (fullnames (string-split (match-string 1 s) ", ")))
-                  (mapcar (lambda (fullname)
-                            (delq nil
-                                  (list (when fullname (cons "姓名" fullname))
-                                        (when role (cons "区分" role)))))
-                          fullnames)))))
-          (dom-by-tag node 'span))))
+  (let ((pattern
+         (concat "\\`"
+                 "\\(?1:.*?\\)"
+                 (format "\\( +\\(?3:%s\\)\\)?" ndl-search--regexp-roles)
+                 "\\'")))
+    (apply
+     #'append
+     (mapcar
+      (lambda (span)
+        (let ((s (dom-inner-text span)))
+          (if (string-match pattern s)
+              (let ((role (match-string 3 s))
+                    (names (string-split (match-string 1 s) ", ")))
+                (mapcar
+                 (lambda (name)
+                   (append
+                    (when role (list (cons "区分" role)))
+                    (if-let* ((_ (string-match "\\(?1:[^ ]+\\)\\s-+\\(?2:[^ ]+\\)"
+                                               name))
+                              (surname (match-string 1 name))
+                              (given-name (match-string 2 name)))
+                        (list (cons "氏" surname)
+                              (cons "名" given-name))
+                      (when name (list (cons "氏名" name))))))
+                 names))
+            (ndl-search--message "Unparsable (creators): '%s'" s)
+            (list (list (cons "氏名" s))))))
+      (dom-by-tag node 'span)))))
 
-(defun ndl-search--process-author-indices (node)
+(defun ndl-search--process-creator-indices (node)
   "Process NODE ('dd') as author indices alist."
   (let ((pattern
          (concat
-          "^\\s-*"
+          "\\` *"
           "\\(\\(?18:[^ ：:]+\\) *[：:] *\\)?"
           "\\(\\(?2:[^,]+\\)\\(, *\\(?4:[^, ]+\\)\\)?\\)" ; surname, given name
           "\\(, *\\(\\(?6:[0-9]+\\)-\\(?7:[0-9]+\\|.+\\)?\\|.+\\)\\)?" ; year-of-birth, year-of-death
-          "\\s-+"
-          "\\(\\(?9:\\cK+\\)\\(, *\\(?11:\\cK+\\)\\)?\\)"
+          "\\( +\\(?9:\\cK+\\)\\(, *\\(?11:\\cK+\\)\\)?\\)?"
           "\\(, *\\(\\([0-9]+\\)-\\([0-9]+\\|.+\\)?\\|.+\\)\\)?"
           "\\( +( *\\(?16:[0-9]+\\) *)\\)?.*" ; entity-id
-          "?")))
+          "\\'")))
     (mapcar
      (lambda (span)
        (let ((s (dom-inner-text span)))
@@ -176,16 +199,22 @@ The bib item URL should have a path '/books/<id>'."
                  (surname-kana (match-string 9 s))
                  (given-name-kana (match-string 11 s))
                  (entity-id (match-string 16 s)))
-             (delq nil
-                   (list
-                    (when role (cons "区分" role))
-                    (when surname (cons "氏" surname))
-                    (when given-name (cons "名" given-name))
-                    (when yob (cons "生年" yob))
-                    (when yod (cons "没年" yod))
-                    (when surname-kana (cons "ヨミカタ／氏" surname-kana))
-                    (when given-name-kana (cons "ヨミカタ／名" given-name-kana))
-                    (when entity-id (cons "ID" entity-id))))))))
+             (append
+              (when role (list (cons "区分" role)))
+              (progn
+                (when-let* ((_ (and surname (null given-name)
+                                    (string-match ".+\\( +\\).+" surname)))
+                            (sn (substring surname 0 (match-beginning 1)))
+                            (gn (substring surname (match-end 1))))
+                  (setq surname sn
+                        given-name gn))
+                (list (cons "氏" surname)
+                      (cons "名" given-name)))
+              (when yob (list (cons "生年" yob)))
+              (when yod (list (cons "没年" yod)))
+              (when surname-kana (list (cons "ヨミカタ／氏" surname-kana)))
+              (when given-name-kana (list (cons "ヨミカタ／名" given-name-kana)))
+              (when entity-id (list (cons "ID" entity-id))))))))
      (dom-by-tag node 'span))))
 
 (defun ndl-search--process-publication-date (node)
@@ -214,18 +243,16 @@ The bib item URL should have a path '/books/<id>'."
   "Process NODE ('dd') as publisher info alist."
   (let ((pattern "^\\(\\([^ :]+\\) *: *\\)?\\([^ (]+\\)\\( *(\\([^)]+\\))\\)?"))
     (mapcar
-     (lambda (a)
-       (let ((s (dom-inner-text a)))
+     (lambda (n)
+       (let ((s (dom-inner-text n)))
          (when (string-match pattern s)
            (let ((place (match-string 2 s))
                  (publisher (match-string 3 s))
                  (role (match-string 5 s)))
-             (delq nil
-                   (list
-                    (when place (cons "所在地" place))
-                    (when publisher (cons "出版社" publisher))
-                    (when role (cons "その他" role))))))))
-     (dom-by-tag node 'a))))
+             (append (when place (list (cons "所在地" place)))
+                     (when publisher (list (cons "出版社" publisher)))
+                     (when role (list (cons "その他" role))))))))
+     (dom-by-tag node 'span))))
 
 (defun ndl-search--process-quantity (node)
   "Process NODE ('dd') as quantity."
@@ -556,6 +583,14 @@ betwee 0 and JITTER."
   (sleep-for (+ seconds (if jitter
                             (/ (random (round (* jitter 1000.0))) 1000.0)
                           0))))
+
+(defun ndl-search--message (s &rest _rest)
+  "Display `ndl-search' message S."
+  (apply #'message `(,(concat "[ndl-search] " s) ,@_rest)))
+
+(defun ndl-search--warn (s &rest _rest)
+  "Display `ndl-search' warning S."
+  (apply #'warn `(,(concat "[ndl-search] " s) ,@_rest)))
 
 (provide 'ndl-search)
 ;;; ndl-search.el ends here
