@@ -86,6 +86,16 @@
                        (string :tag "省略形")))
   :group 'ndl-search)
 
+(defcustom ndl-search-dpid
+  '("iss-ndl-opac" "zassaku")
+  "Data providers for queries."
+  :type '(repeat (string :tag "Data provider"))
+  :group 'ndl-search)
+
+(defconst ndl-search-data-providers
+  '("zassaku" "iss-ndl-opac")
+  "All available data providers.")
+
 ;; Bibilography Item
 
 (defconst ndl-search--field-processors
@@ -324,17 +334,24 @@ The bib item URL should have a path '/books/<id>'."
             (by-class (car (by-class dom "search-result-body"))
                       "search-result-item"))))))))
 
-(cl-defun ndl-search-query (&key any title creator (dpid "iss-ndl-opac"))
+(cl-defun ndl-search-query (&key any title creator dpid)
   "Make an OpenURL search query.
 ANY maps to the query parameter 'any'.
 TITLE maps to the query parameter 'btitle'.
-CREATOR maps to the query parameter 'au'."
+CREATOR maps to the query parameter 'au'.
+DPID maps to the query parameter 'ndl_dpid'."
   (let* ((query-params
-          (delq nil (list
-                     (when dpid (cons 'ndl_dpid (list dpid)))
-                     (when any (cons 'any (list any)))
-                     (when title (cons 'btitle (list title)))
-                     (when creator (cons 'au (list creator))))))
+          (append
+           ;; NOTE(2026-07-21): The API documentation is wrong in that
+           ;; ndl_dpid can be repeated; it interprets space-delimited
+           ;; values, like other multi-word fields.
+           (when dpid
+             (list (cons 'ndl_dpid
+                         (list (or (and (listp dpid) (string-join dpid " "))
+                                   dpid)))))
+           (when any (list (cons 'any (list any))))
+           (when title (list (cons 'btitle (list title))))
+           (when creator (list (cons 'au (list creator))))))
          (url (ndl-search-build-url
                "https://ndlsearch.ndl.go.jp/api/openurl" nil query-params))
          all-items)
@@ -488,33 +505,36 @@ ITEM-ALIST-GETTER get an item alist for one of the COMPLETIONS."
 
 ;; Interactive Commands
 
+(defun ndl-search-query--command (&rest _args)
+  "Query interface for interactive command."
+  (let ((dpid (if current-prefix-arg
+                  (completing-read-multiple
+                   "Choose data provider: " ndl-search-data-providers
+                   nil t (string-join ndl-search-dpid ","))
+                ndl-search-dpid)))
+    (when-let* ((url (apply #'ndl-search-query `(:dpid ,dpid ,@_args))))
+      (ndl-search-bib-item-get url))))
+
 ;;;###autoload
 (defun ndl-search-any (query)
-  "Perform 'any' search for QUERY."
+  "Perform 'any' search for QUERY.
+Invoke this command with a prefix argument to switch data providers."
   (interactive "sNDL search (any): ")
-  (when-let* ((url (ndl-search-query :any query)))
-    (ndl-search-bib-item-get url)))
+  (ndl-search-query--command :any query))
 
 ;;;###autoload
 (defun ndl-search-creator (query)
-  "Perform 'creator' search for QUERY."
+  "Perform 'creator' search for QUERY.
+Invoke this command with a prefix argument to switch data providers."
   (interactive "sNDL search (creator): ")
-  (when-let* ((url (ndl-search-query :creator query)))
-    (ndl-search-bib-item-get url)))
+  (ndl-search-query--command :creator query))
 
 ;;;###autoload
 (defun ndl-search-title (query)
-  "Perform 'title' search for QUERY."
+  "Perform 'title' search for QUERY.
+Invoke this command with a prefix argument to switch data providers."
   (interactive "sNDL search (title): ")
-  (when-let* ((url (ndl-search-query :title query)))
-    (ndl-search-bib-item-get url)))
-
-;;;###autoload
-(defun ndl-search-article-any (query)
-  "Perform 'any' search for QUERY."
-  (interactive "sNDL search (any): ")
-  (when-let* ((url (ndl-search-query :any query :dpid "zassaku")))
-    (ndl-search-bib-item-get url)))
+  (ndl-search-query--command :title query))
 
 ;; Utilities
 
