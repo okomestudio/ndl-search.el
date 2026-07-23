@@ -91,9 +91,8 @@
                            (map-elt it "数量")))
            :isbn (map-elt item "ISBN"))
      (ndl-search-zotero--json-language (map-elt item "本文の言語コード"))
-     (let* ((ndc10 (map-elt item "NDC10版"))
-            (topic-indices (map-elt item "件名標目")))
-       (list :tags (vconcat (list (list :tag ndc10))) ))
+     (ndl-search-zotero--json-tags (map-elt item "NDC10版")
+                                   (map-elt item "件名標目"))
      (ndl-search-zotero--json-extra
       (list (cons "NDLBibID"
                   (map-elt (map-elt item "書誌ID（NDLBibID）") "NDLBibID")))))))
@@ -108,6 +107,25 @@ typically used to infer surname and given name from a full name."
               (cons (concat surname given-name)
                     (cons surname given-name))))
           item))
+
+(defun ndl-search-zotero--json-tags (ncd10 topic-term-indices)
+  "Render NCD10 and TOPIC-TERM-INDICES as :tags."
+  (list :tags
+        (vconcat
+         (mapcar
+          (lambda (tag) (list :tag tag))
+          (flatten-list
+           (append
+            (mapcar (lambda (s)
+                      (when-let*
+                          ((_ (string-match "\\`.*: *\\(?1:.+\\)\\'" s))
+                           (terms (string-split (match-string 1 s)
+                                                "[．]" t "\\s-+")))
+                        terms))
+                    (list ncd10))
+            (mapcar (lambda (it)
+                      (map-elt it "件名"))
+                    topic-term-indices)))))))
 
 (defun ndl-search-zotero--json-publisher (publisher-items)
   "Render PUBLISHER-ITEMS as :publisher and :place."

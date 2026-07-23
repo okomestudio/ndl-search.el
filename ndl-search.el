@@ -112,6 +112,7 @@
     ("著者・編者" . ndl-search--process-creators)
     ("シリーズ著者・編者" . ndl-search--process-creators)
     ("著者標目" . ndl-search--process-creator-indices)
+    ("件名標目" . ndl-search--process-topic-term-indices)
     ("書誌ID（NDLBibID）" . ndl-search--process-ndl-bib-id)))
 
 (defconst ndl-search--regexp-roles
@@ -176,7 +177,7 @@ The bib item URL should have a path '/books/<id>'."
       (dom-by-tag node 'span)))))
 
 (defun ndl-search--process-creator-indices (node)
-  "Process NODE ('dd') as author indices alist."
+  "Process NODE ('dd') as creator indices alist."
   (let ((pattern
          (concat
           "\\` *"
@@ -214,6 +215,26 @@ The bib item URL should have a path '/books/<id>'."
               (when yod (list (cons "没年" yod)))
               (when surname-kana (list (cons "ヨミカタ／氏" surname-kana)))
               (when given-name-kana (list (cons "ヨミカタ／名" given-name-kana)))
+              (when entity-id (list (cons "ID" entity-id))))))))
+     (dom-by-tag node 'span))))
+
+(defun ndl-search--process-topic-term-indices (node)
+  "Process NODE ('dd') as topic term indices alist."
+  (let ((pattern (concat "\\` *"
+                         "\\(?1:[^ ]+\\)"    ; topic term
+                         "\\( +\\(?3:\\cK+\\)\\)?" ; yomikata
+                         "\\( +( *\\(?6:[0-9]+\\) *)\\)?" ; entity-id
+                         ".*\\'")))
+    (mapcar
+     (lambda (span)
+       (let ((s (dom-inner-text span)))
+         (when (string-match pattern s)
+           (let ((topic-term (match-string 1 s))
+                 (yomikata (match-string 3 s))
+                 (entity-id (match-string 6 s)))
+             (append
+              (when topic-term (list (cons "件名" topic-term)))
+              (when yomikata (list (cons "ヨミカタ" yomikata)))
               (when entity-id (list (cons "ID" entity-id))))))))
      (dom-by-tag node 'span))))
 
