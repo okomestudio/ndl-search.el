@@ -117,7 +117,7 @@
     ("書誌ID（NDLBibID）" . ndl-search--process-ndl-bib-id)))
 
 (defconst ndl-search--regexp-roles
-  (regexp-opt '("著" "編" "訳")))
+  (regexp-opt '("著" "編" "訳" "監修" "漫画")))
 
 (defun ndl-search-bib-item-get (url)
   "Get bib item as an alist from URL.
@@ -183,9 +183,9 @@ The bib item URL should have a path '/books/<id>'."
          (concat
           "\\` *"
           "\\(\\(?18:[^ ：:]+\\) *[：:] *\\)?"
-          "\\(\\(?2:[^,]+\\)\\(, *\\(?4:[^, ]+\\)\\)?\\)" ; surname, given name
-          "\\(, *\\(\\(?6:[0-9]+\\)-\\(?7:[0-9]+\\|.+\\)?\\|.+\\)\\)?" ; year-of-birth, year-of-death
-          "\\( +\\(?9:\\cK+\\)\\(, *\\(?11:\\cK+\\)\\)?\\)?"
+          "\\(\\(?2:[^ ,]+\\)\\(, *\\(?4:[^ ,]+\\)\\)?\\)" ; surname, given name
+          "\\(, *\\(\\(?6:[0-9]+\\)-\\(?7:[0-9]+\\|.+?\\)?\\|.+?\\)\\)?" ; year-of-birth, year-of-death
+          "\\( +\\(?9:\\(\\cK\\|[a-zA-Z]\\)+\\)\\(, *\\(?11:\\cK+\\)\\)?\\)?"
           "\\(, *\\(\\([0-9]+\\)-\\([0-9]+\\|.+\\)?\\|.+\\)\\)?"
           "\\( +( *\\(?16:[0-9]+\\) *)\\)?.*" ; entity-id
           "\\'")))

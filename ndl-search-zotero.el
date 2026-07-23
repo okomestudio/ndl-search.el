@@ -62,6 +62,8 @@
            :issue (map-elt item "掲載号")
            :pages (map-elt item "掲載ページ"))
      (ndl-search-zotero--json-language (map-elt item "本文の言語コード"))
+     (list :libraryCatalog "NDL Search"
+           :callNumber (map-elt item "請求記号"))
      (ndl-search-zotero--json-extra
       (list (cons "NDLBibID"
                   (map-elt (map-elt item "書誌ID（NDLBibID）") "NDLBibID")))))))
@@ -91,7 +93,13 @@
                            (map-elt it "数量")))
            :isbn (map-elt item "ISBN"))
      (ndl-search-zotero--json-language (map-elt item "本文の言語コード"))
-     (ndl-search-zotero--json-tags (map-elt item "NDC10版")
+     (list :libraryCatalog "NDL Search"
+           :callNumber (map-elt item "請求記号"))
+     (ndl-search-zotero--json-tags (append
+                                    (when-let* ((s (map-elt item "NDC9版")))
+                                      (list s))
+                                    (when-let* ((s (map-elt item "NDC10版")))
+                                      (list s)))
                                    (map-elt item "件名標目"))
      (ndl-search-zotero--json-extra
       (list (cons "NDLBibID"
@@ -108,23 +116,23 @@ typically used to infer surname and given name from a full name."
                     (cons surname given-name))))
           item))
 
-(defun ndl-search-zotero--json-tags (ncd10 topic-term-indices)
-  "Render NCD10 and TOPIC-TERM-INDICES as :tags."
+(defun ndl-search-zotero--json-tags (ndc-categories topic-term-indices)
+  "Render NDC-CATEGORIES and TOPIC-TERM-INDICES as :tags."
   (list :tags
         (vconcat
          (mapcar
           (lambda (tag) (list :tag tag))
           (flatten-list
-           (append
+           (list
             (mapcar (lambda (s)
                       (when-let*
                           ((_ (string-match "\\`.*: *\\(?1:.+\\)\\'" s))
                            (terms (string-split (match-string 1 s)
-                                                "[．]" t "\\s-+")))
+                                                "\\([．]\\|--\\)" t "\\s-+")))
                         terms))
-                    (list ncd10))
+                    ndc-categories)
             (mapcar (lambda (it)
-                      (map-elt it "件名"))
+                      (string-split (map-elt it "件名") "--" 'omit-empty "\\s-+"))
                     topic-term-indices)))))))
 
 (defun ndl-search-zotero--json-publisher (publisher-items)
@@ -159,11 +167,12 @@ When given, CREATOR-INDICES holds creator index (著者標目) entries."
              (list :creatorType
                    (pcase (map-elt creator "区分")
                      ("著" "author")
+                     ("漫画" "author")
                      ("編" (if (map-elt creator "シリーズ")
                                "seriesEditor"
                              "editor"))
                      ("訳" "translator")
-                     ("監修" "editor")
+                     ("監修" "contributor")
                      (_
                       (ndl-search--message "Unknown role for '%s': '%s'"
                                            (or (map-elt creator "氏名")
