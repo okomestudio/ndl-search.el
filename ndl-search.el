@@ -6,7 +6,7 @@
 ;; URL: https://github.com/okomestudio/ndl-search.el
 ;; Version: 0.1.1
 ;; Keywords: convenience
-;; Package-Requires: ((emacs "30.1") (s "1.13.1"))
+;; Package-Requires: ((emacs "30.1") (compat "31.0.0.2") (s "1.13.1"))
 ;;
 ;;; License:
 ;;
@@ -33,6 +33,9 @@
 ;;
 ;;; Code:
 
+(require 'compat)
+(require 's)
+
 (require 'cl-lib)
 (require 'dom)
 (require 'map)
@@ -40,8 +43,6 @@
 (require 'url-parse)
 (require 'url-util)
 (require 'xml)
-
-(require 's)
 
 (defgroup ndl-search nil
   "Customization group for `ndl-search'."
