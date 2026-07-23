@@ -440,10 +440,8 @@ DPID maps to the query parameter 'ndl_dpid'."
               t))))
     (ndl-search--completing-read (take ndl-search-max-items all-items))))
 
-(defun ndl-search--affixation-function (completions item-alist-getter)
-  "Affixation function for completion.
-COMPLETIONS are passed from `completing-read'.
-ITEM-ALIST-GETTER get an item alist for one of the COMPLETIONS."
+(defun ndl-search--create-completion (item-alist)
+  "Create completion string (also prefix and suffix) from ITEM-ALIST."
   (cl-letf
       (((symbol-function 's-align)
         (lambda (text column &optional side)
@@ -454,65 +452,57 @@ ITEM-ALIST-GETTER get an item alist for one of the COMPLETIONS."
                               (_ column))))
                    (list (propertize " " 'display `(space :align-to ,col))
                          text))))))
-    (mapcar
-     (lambda (completion)
-       (let-alist (funcall item-alist-getter completion)
-         (let* ((width (window-body-width (active-minibuffer-window)))
-                (prefix
-                 (concat (s-align (or .categories "") 9 'right)))
-                (main
-                 (concat (s-align (or .title "") 11)
-                         (s-align (or .author "") (round (* width 0.45)))
-                         (s-align (or .publisher .book)
-                                  (round (* width 0.65)))
-                         (s-align (or .publish-date
-                                      (concat .book-publish-date
-                                              ": "
-                                              .page))
-                                  (round (* width 0.80)))))
-                (suffix
-                 (concat (s-align (or .material-types "") width 'right))))
-           (list main prefix suffix))))
-     completions)))
+    (let-alist item-alist
+      (let* ((width (window-body-width (minibuffer-window)))
+             (prefix
+              (concat (s-align (or .categories "") 9 'right)))
+             (completion
+              (concat (s-align (or .title "") 11)
+                      (s-align (or .author "") (round (* width 0.45)))
+                      (s-align (or .publisher .book)
+                               (round (* width 0.65)))
+                      (s-align (or .publish-date
+                                   (concat .book-publish-date
+                                           ": "
+                                           .page))
+                               (round (* width 0.80)))))
+             (suffix
+              (concat (s-align (or .material-types "") width 'right))))
+        (list completion prefix suffix)))))
 
 (defun ndl-search--completing-read (search-result-items)
   "Completing read SEARCH-RESULT-ITEMS."
-  (let ((entity-path
-         (cond
-          ((featurep 'consult)
-           (ndl-search--completing-read-consult search-result-items))
-          (t
-           (let ((completion-extra-properties
-                  '(:affixation-function
-                    (lambda (completions)
-                      (ndl-search--affixation-function
-                       completions
-                       (lambda (completion)
-                         (get-text-property 0 'item-data completion)))))))
-             (completing-read "Filter: "
-                              (mapcar (lambda (it)
-                                        (propertize (alist-get 'url it)
-                                                    'item-data it))
-                                      search-result-items)))))))
-    (url-recreate-url
-     (url-parse-make-urlobj
-      "https" nil nil "ndlsearch.ndl.go.jp" nil entity-path nil nil t))))
+  (when-let*
+      ((candidates
+        (mapcar (lambda (it)
+                  (pcase-let ((`(,completion ,prefix ,suffix)
+                               (ndl-search--create-completion it)))
+                    (cons (propertize completion
+                                      'item-data it
+                                      'completion-prefix prefix
+                                      'completion-suffix suffix)
+                          it)))
+                search-result-items))
+       (completion-extra-properties
+        '(:affixation-function
+          (lambda (completions)
+            (mapcar
+             (lambda (completion)
+               (list completion
+                     (get-text-property 0 'completion-prefix completion)
+                     (get-text-property 0 'completion-suffix completion)))
+             completions))))
+       (chosen
+        (cond
+         ((featurep 'consult)
+          (ndl-search--completing-read-consult candidates))
+         (t
+          (map-elt (completing-read "Filter: " candidates) candidates)))))
+    (get-text-property 0 'item-data chosen)))
 
-(defun ndl-search--completing-read-consult (search-result-items)
-  "Completing read SEARCH-RESULT-ITEMS using `consult'."
-  (let* ((candidates
-          (mapcar (lambda (it)
-                    (cons (propertize (alist-get 'url it) 'item-data it)
-                          it))
-                  search-result-items))
-         (completion-extra-properties
-          '(:affixation-function
-            (lambda (completions)
-              (ndl-search--affixation-function
-               completions
-               (lambda (completion)
-                 (get-text-property 0 'item-data completion))))))
-         (preview-buf (get-buffer-create " *ndl-search-preview*"))
+(defun ndl-search--completing-read-consult (candidates)
+  "Completing read from CANDIDATES using `consult'."
+  (let* ((preview-buf (get-buffer-create " *ndl-search-preview*"))
          (preview-win nil))
     (car
      (consult--read
@@ -560,7 +550,12 @@ ITEM-ALIST-GETTER get an item alist for one of the COMPLETIONS."
                    "Choose data provider: " ndl-search-data-providers
                    nil t (string-join ndl-search-dpid ","))
                 ndl-search-dpid)))
-    (when-let* ((url (apply #'ndl-search-query `(:dpid ,dpid ,@_args))))
+    (when-let*
+        ((search-result-item (apply #'ndl-search-query `(:dpid ,dpid ,@_args)))
+         (entity-path (map-elt search-result-item 'url))
+         (url (url-recreate-url
+               (url-parse-make-urlobj "https" nil nil "ndlsearch.ndl.go.jp" nil
+                                      entity-path nil nil t))))
       (ndl-search-bib-item-get url))))
 
 ;;;###autoload
